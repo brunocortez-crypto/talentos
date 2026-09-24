@@ -11,57 +11,12 @@ Sistema web em nuvem para consolidar vagas de recrutamento, gestão de empresas 
 - **Deploy:** Vercel
 - **Validação:** Zod
 
-## 🔧 Setup Inicial
+## 🚀 Rodando em Nuvem
 
-### 1. Instalar Dependências
-
-```bash
-npm install
-```
-
-### 2. Configurar Supabase
-
-#### Criar o Projeto
-1. Acesse [supabase.com](https://supabase.com) e crie um novo projeto
-2. Copie as credenciais:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-   - `SUPABASE_SECRET_KEY` (service role)
-
-#### Criar as Tabelas
-
-Na console Supabase, acesse **SQL Editor** e execute o script de setup:
-
-```bash
-# Ver: docs/DATABASE_SCHEMA.sql
-```
-
-### 3. Configurar Variáveis de Ambiente
-
-Crie `.env.local` na raiz do projeto:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=eyJ...
-SUPABASE_SECRET_KEY=eyJ...
-```
-
-### 4. Criar Primeiro Usuário
-
-Na console Supabase:
-
-1. Vá para **Authentication** → **Users**
-2. Clique **Add User**
-3. Email: seu.email@example.com
-4. Password: senhaSegura123!
-
-### 5. Executar Localmente
-
-```bash
-npm run dev
-```
-
-Acesse `http://localhost:3000` → será redirecionado para `/login`
+A aplicação está **100% em nuvem**:
+- 🌍 Frontend: https://talentos.vercel.app
+- 🗄️ Banco: Supabase (PostgreSQL)
+- 🔐 Auth: Supabase Auth
 
 ## 📁 Estrutura de Pastas
 
@@ -80,16 +35,18 @@ talentos/
 │   │   ├── auth/             # Auth utilities
 │   │   └── utils/            # Helpers
 │   └── components/           # Componentes reutilizáveis
-├── .env.local                # Credenciais (NÃO VERSIONAR)
+├── docs/
+│   ├── DATABASE_SCHEMA.sql   # Script de criação do banco
+│   └── SETUP_GUIDE.md        # Guia de setup
 └── package.json
 ```
 
 ## 🔐 Segurança
 
-- Credenciais em `.env.local` (nunca commitar)
 - RLS habilitada em todas as tabelas
 - Validação de auth via cookies Supabase
 - Funções server-only para operações sensíveis
+- Chaves de API seguras (não versionadas)
 
 ## 📊 Tabelas do Banco
 
@@ -106,6 +63,7 @@ talentos/
 ## 🚀 Roadmap
 
 - ✅ Setup inicial
+- ✅ Infraestrutura em nuvem (Vercel + Supabase)
 - ⏳ CRUD de vagas e empresas
 - ⏳ Dashboard com cards
 - ⏳ CRM: Pipeline de vendas
