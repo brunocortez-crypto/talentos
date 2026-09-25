@@ -37,7 +37,7 @@ SUPABASE_SECRET_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 1. No Supabase, vá para **SQL Editor**
 2. Clique **New Query**
-3. Cole todo o conteúdo de `docs/DATABASE_SCHEMA.sql`
+3. Rode, em ordem, os arquivos de `supabase/migrations/`
 4. Clique **Run** e aguarde
 
 Você verá mensagens de sucesso para cada tabela criada.
