@@ -70,3 +70,4 @@ talentos/
 - ⏳ Faturamento consolidado
 - ⏳ Integração com Indeed
 - ⏳ Agendamento de entrevistas
+
