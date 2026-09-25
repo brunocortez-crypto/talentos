@@ -21,21 +21,53 @@ export async function getVagasComFiltros(
   status?: string
 ) {
   const supabase = await createClient();
+
+  // Query base sem joins (mais rápido e menos problemas de RLS)
   let query = supabase
     .from("vagas")
-    .select(
-      "*, clientes(nome), analistas(nome), projetos(nome), receitas_fixas(valor)"
-    )
+    .select("*")
     .order("data_abertura", { ascending: false });
 
-  if (projeto) query = query.eq("projetos.nome", projeto);
-  if (analista) query = query.eq("analistas.nome", analista);
-  if (cliente) query = query.eq("clientes.nome", cliente);
   if (status) query = query.eq("status", status);
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return data;
+  const { data: vagas, error } = await query;
+  if (error) {
+    console.error("Erro ao carregar vagas:", error);
+    return [];
+  }
+
+  if (!vagas || vagas.length === 0) return [];
+
+  // Fazer joins manualmente no JavaScript
+  const clienteIds = [...new Set(vagas.map(v => v.cliente_id))];
+  const analistaIds = [...new Set(vagas.filter(v => v.analista_id).map(v => v.analista_id))];
+  const projetoIds = [...new Set(vagas.map(v => v.projeto_id))];
+
+  const [clientesRes, analistasRes, projetosRes] = await Promise.all([
+    supabase.from("clientes").select("id, nome").in("id", clienteIds),
+    supabase.from("analistas").select("id, nome").in("id", analistaIds),
+    supabase.from("projetos").select("id, nome").in("id", projetoIds),
+  ]);
+
+  const clientesMap = new Map((clientesRes.data || []).map(c => [c.id, c.nome]));
+  const analistasMap = new Map((analistasRes.data || []).map(a => [a.id, a.nome]));
+  const projetosMap = new Map((projetosRes.data || []).map(p => [p.id, p.nome]));
+
+  // Enriquecer vagas com dados dos joins
+  const vagasEnriquecidas = vagas.map(v => ({
+    ...v,
+    clientes: { nome: clientesMap.get(v.cliente_id) || "" },
+    analistas: v.analista_id ? { nome: analistasMap.get(v.analista_id) || "" } : null,
+    projetos: { nome: projetosMap.get(v.projeto_id) || "" },
+  }));
+
+  // Filtrar no JavaScript se necessário
+  let resultado = vagasEnriquecidas;
+  if (projeto) resultado = resultado.filter(v => v.projetos.nome === projeto);
+  if (analista) resultado = resultado.filter(v => v.analistas?.nome === analista);
+  if (cliente) resultado = resultado.filter(v => v.clientes.nome === cliente);
+
+  return resultado;
 }
 
 export async function getEstatisticas() {
