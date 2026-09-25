@@ -37,6 +37,9 @@ CLIENTES_MESMO_NOME = {
     "Digital + cont": "Digital + Contabilidade",
     "Contabilidade Consultec": "Consultec Contabilidade",
     "Contabilidade Hoffmam": "Hoffmam Contabilidade",
+    "ContabTech": "Contabitech",
+    "Top Conter": "Top Cont",
+    "Hands Financeiro": "Hands",
 }
 
 # Datas digitadas com erro na planilha (conferidas uma a uma).
@@ -187,6 +190,41 @@ def ler_linhas(caminho):
             yield numero, linha
 
 
+def numero_positivo(valor):
+    return isinstance(valor, (int, float)) and valor > 0
+
+
+def salarios_da_aba_resultado(caminho, cliente_de):
+    """Salário, % cobrado e repasse que só existem na aba Resultado (versão antiga da BD).
+
+    Só devolve as chaves (abertura, cliente, vaga) em que a aba não se contradiz.
+    """
+    livro = openpyxl.load_workbook(caminho, data_only=True)
+    aba = next((livro[n] for n in livro.sheetnames if n.strip() == "Resultado"), None)
+    if aba is None:
+        return {}
+    linhas = aba.iter_rows(values_only=True)
+    cabecalho = [limpo(c) for c in next(linhas)]
+    pos = {c: cabecalho.index(c) for c in ("Abertura", "Cliente", "Vaga", "Salario", "% Receita", "Receita Escalar")}
+    achados = defaultdict(set)
+    for valores in linhas:
+        salario, percentual = valores[pos["Salario"]], valores[pos["% Receita"]]
+        if not numero_positivo(salario) or not numero_positivo(percentual):
+            continue
+        abertura, _ = data(valores[pos["Abertura"]], [], 0, "")
+        cliente = limpo(valores[pos["Cliente"]])
+        if abertura is None or cliente is None:
+            continue
+        repasse = valores[pos["Receita Escalar"]]
+        chave_vaga = (abertura, chave_cliente(cliente_de(cliente)), chave(limpo(valores[pos["Vaga"]])))
+        achados[chave_vaga].add((
+            round(float(salario), 2),
+            round(float(percentual) * 100, 2),
+            round(float(repasse), 2) if isinstance(repasse, (int, float)) else 0.0,
+        ))
+    return {k: next(iter(v)) for k, v in achados.items() if len(v) == 1}
+
+
 def main(entrada, saida):
     linhas = list(ler_linhas(entrada))
     avisos = []
@@ -195,7 +233,13 @@ def main(entrada, saida):
     cliente_canonico = unificar(nomes_clientes, chave_cliente, clientes_oficiais(entrada))
     cidade_canonica = unificar([limpo(l["Cidade"]) for _, l in linhas if limpo(l["Cidade"])], chave)
 
-    vagas, empresas_inferidas = [], 0
+    def cliente_de(nome):
+        nome = CLIENTES_MESMO_NOME.get(nome, nome)
+        return cliente_canonico.get(nome, nome)
+
+    salarios = salarios_da_aba_resultado(entrada, cliente_de)
+
+    vagas, receitas, empresas_inferidas = [], [], 0
     for numero, l in linhas:
         projeto, canal = projeto_e_canal(l["Projeto"])
         empresa, canal_empresa, inferida = empresa_e_canal(l["Empresa Faturamento"], projeto, avisos, numero)
@@ -211,18 +255,40 @@ def main(entrada, saida):
         status = STATUS.get(limpo(l["Status"]).lower())
         if status is None:
             sys.exit(f"linha {numero}: status desconhecido {l['Status']!r}")
-        nome_cliente = CLIENTES_MESMO_NOME.get(limpo(l["Cliente"]), limpo(l["Cliente"]))
-        original = {c: (v.isoformat() if isinstance(v, dt.datetime) else v) for c, v in l.items()}
-        vagas.append([
-            numero, projeto, empresa, canal or canal_empresa, cliente_canonico[nome_cliente],
-            cidade_canonica.get(limpo(l["Cidade"])), cargo, quantidade,
-            round(float(l["Receita"] or 0), 2), limpo(l["Analista"]), status,
-            tipo_faturamento(limpo(l["Faturamento"])), observacoes, abertura, conclusao,
-            json.dumps(original, ensure_ascii=False),
-        ])
+        cliente = cliente_de(limpo(l["Cliente"]))
+        receita = round(float(l["Receita"] or 0), 2)
+        original = json.dumps(
+            {c: (v.isoformat() if isinstance(v, dt.datetime) else v) for c, v in l.items()}, ensure_ascii=False
+        )
 
-    analistas = sorted({v[9] for v in vagas if v[9]})
-    clientes = sorted({v[4] for v in vagas})
+        if chave(cargo) == "mensalidade":
+            receitas.append({
+                "linha": numero, "projeto": projeto, "empresa": empresa,
+                "cliente": projeto if chave(cliente) == "mensalidade" else cliente,
+                "descricao": cargo, "valor": receita, "competencia": abertura,
+                "obs": observacoes, "original": original,
+            })
+            continue
+
+        salario, percentual, repasse = salarios.get(
+            (abertura, chave_cliente(cliente), chave(limpo(l["Vaga"]))), (None, None, 0.0)
+        )
+        vagas.append({
+            "linha": numero, "projeto": projeto, "empresa": empresa, "canal": canal or canal_empresa,
+            "cliente": cliente, "cidade": cidade_canonica.get(limpo(l["Cidade"])), "cargo": cargo,
+            "quantidade": quantidade, "receita": receita, "salario": salario, "percentual": percentual,
+            "repasse": repasse, "analista": limpo(l["Analista"]), "status": status,
+            "tipo": tipo_faturamento(limpo(l["Faturamento"])), "obs": observacoes,
+            "abertura": abertura, "conclusao": conclusao, "original": original,
+        })
+
+    analistas = sorted({v["analista"] for v in vagas if v["analista"]})
+    clientes = sorted({v["cliente"] for v in vagas} | {r["cliente"] for r in receitas})
+    colunas_vaga = list(vagas[0])
+    colunas_receita = list(receitas[0]) if receitas else []
+
+    def valores(registros, colunas):
+        return ",\n".join("  (" + ", ".join(sql(r[c]) for c in colunas) + ")" for r in registros)
 
     with open(saida, "w", encoding="utf-8") as f:
         f.write("-- Gerado por scripts/importar_planilha.py a partir da aba BD.\nbegin;\n\n")
@@ -230,25 +296,37 @@ def main(entrada, saida):
         f.write(",\n".join(f"  ({sql(a)})" for a in analistas) + "\non conflict (nome) do nothing;\n\n")
         f.write("insert into public.clientes (nome) values\n")
         f.write(",\n".join(f"  ({sql(c)})" for c in clientes) + "\non conflict (nome) do nothing;\n\n")
-        f.write("delete from public.vagas where planilha_linha is not null;\n\n")
+        f.write("delete from public.vagas where planilha_linha is not null;\n")
+        f.write("delete from public.receitas_fixas where planilha_linha is not null;\n\n")
         f.write(
             "insert into public.vagas (planilha_linha, projeto_id, empresa_faturamento, canal, cliente_id, cidade,\n"
-            "  cargo, quantidade, receita, analista_id, status, tipo_faturamento, observacoes,\n"
-            "  data_abertura, data_conclusao, planilha_original)\n"
+            "  cargo, quantidade, receita, salario, percentual_cobrado, repasse, analista_id, status,\n"
+            "  tipo_faturamento, observacoes, data_abertura, data_conclusao, planilha_original)\n"
             "select t.linha::int, p.id, t.empresa, t.canal, c.id, t.cidade, t.cargo, t.quantidade::int,\n"
-            "  t.receita::numeric, a.id, t.status, t.tipo, t.obs, t.abertura::date, t.conclusao::date, t.original::jsonb\n"
-            "from (values\n"
-        )
-        f.write(",\n".join("  (" + ", ".join(sql(x) for x in v) + ")" for v in vagas))
-        f.write(
-            "\n) as t(linha, projeto, empresa, canal, cliente, cidade, cargo, quantidade, receita,\n"
-            "        analista, status, tipo, obs, abertura, conclusao, original)\n"
+            "  t.receita::numeric, t.salario::numeric, t.percentual::numeric, t.repasse::numeric, a.id, t.status,\n"
+            "  t.tipo, t.obs, t.abertura::date, t.conclusao::date, t.original::jsonb\n"
+            f"from (values\n{valores(vagas, colunas_vaga)}\n) as t({', '.join(colunas_vaga)})\n"
             "join public.projetos p on p.nome = t.projeto\n"
             "join public.clientes c on c.nome = t.cliente\n"
             "left join public.analistas a on a.nome = t.analista;\n\n"
         )
-        f.write(f"do $$ begin\n  if (select count(*) from public.vagas where planilha_linha is not null) <> {len(vagas)} then\n"
-                f"    raise exception 'Importação incompleta: esperava {len(vagas)} vagas';\n  end if;\nend $$;\n\ncommit;\n")
+        if receitas:
+            f.write(
+                "insert into public.receitas_fixas (planilha_linha, projeto_id, empresa_faturamento, cliente_id,\n"
+                "  descricao, valor, competencia, observacoes, planilha_original)\n"
+                "select t.linha::int, p.id, t.empresa, c.id, t.descricao, t.valor::numeric, t.competencia::date,\n"
+                "  t.obs, t.original::jsonb\n"
+                f"from (values\n{valores(receitas, colunas_receita)}\n) as t({', '.join(colunas_receita)})\n"
+                "join public.projetos p on p.nome = t.projeto\n"
+                "join public.clientes c on c.nome = t.cliente;\n\n"
+            )
+        f.write(
+            "do $$ begin\n"
+            f"  if (select count(*) from public.vagas where planilha_linha is not null) <> {len(vagas)}\n"
+            f"  or (select count(*) from public.receitas_fixas where planilha_linha is not null) <> {len(receitas)} then\n"
+            f"    raise exception 'Importação incompleta: esperava {len(vagas)} vagas e {len(receitas)} receitas fixas';\n"
+            "  end if;\nend $$;\n\ncommit;\n"
+        )
 
     juntados = defaultdict(set)
     for original, destino in cliente_canonico.items():
@@ -259,8 +337,11 @@ def main(entrada, saida):
         if original in presentes:
             juntados[cliente_canonico.get(destino, destino)].add(original)
 
-    print(f"Vagas: {len(vagas)} | Clientes: {len(clientes)} | Analistas: {len(analistas)} ({', '.join(analistas)})")
-    print(f"Receita total: R$ {sum(v[8] for v in vagas):,.2f}")
+    print(f"Vagas: {len(vagas)} | Receitas fixas: {len(receitas)} | Clientes: {len(clientes)} | "
+          f"Analistas: {len(analistas)} ({', '.join(analistas)})")
+    total_vagas, total_fixas = sum(v["receita"] for v in vagas), sum(r["valor"] for r in receitas)
+    print(f"Receita: vagas R$ {total_vagas:,.2f} + fixas R$ {total_fixas:,.2f} = R$ {total_vagas + total_fixas:,.2f}")
+    print(f"Vagas com salário da aba Resultado: {sum(v['salario'] is not None for v in vagas)}")
     print(f"Empresa de faturamento preenchida pelo projeto: {empresas_inferidas} vagas")
     print(f"Clientes unificados ({len(juntados)}):")
     for destino, origens in sorted(juntados.items()):

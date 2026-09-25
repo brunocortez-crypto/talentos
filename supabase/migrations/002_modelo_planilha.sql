@@ -1,15 +1,20 @@
 -- Troca o modelo genérico pelo modelo da planilha BD_Talentos.
--- As tabelas removidas abaixo estavam vazias quando esta migração foi aplicada.
+-- Recria tudo do zero: só pode rodar antes de o sistema ter dados próprios
+-- (os dados da planilha se recarregam com scripts/importar_planilha.py).
 
 begin;
 
 drop table if exists
+  public.receitas_fixas,
   public.faturamento,
   public.interacoes,
   public.oportunidades,
   public.contatos,
   public.vagas,
-  public.empresas
+  public.empresas,
+  public.clientes,
+  public.analistas,
+  public.projetos
 cascade;
 
 -- Papéis ------------------------------------------------------------------
@@ -89,6 +94,10 @@ create table public.vagas (
   cargo text not null,
   quantidade integer not null default 1 check (quantidade > 0),
   receita numeric(12, 2) not null default 0,
+  -- receita sugerida = salario * percentual_cobrado / 100 - repasse; a receita pode ser ajustada
+  salario numeric(12, 2) check (salario >= 0),
+  percentual_cobrado numeric(5, 2) check (percentual_cobrado >= 0),
+  repasse numeric(12, 2) not null default 0,
   analista_id uuid references public.analistas(id) on delete set null,
   status text not null default 'aberta'
     check (status in ('aberta', 'faturar', 'concluida', 'substituicao', 'congelada', 'cancelada')),
@@ -110,6 +119,25 @@ create index vagas_abertura_idx on public.vagas (data_abertura);
 
 create trigger vagas_atualizado_em before update on public.vagas
   for each row execute function public.tocar_atualizado_em();
+
+-- Receitas que não são vaga (mensalidades etc.) ----------------------------
+
+create table public.receitas_fixas (
+  id uuid primary key default gen_random_uuid(),
+  cliente_id uuid not null references public.clientes(id) on delete restrict,
+  projeto_id smallint not null references public.projetos(id),
+  empresa_faturamento text
+    check (empresa_faturamento in ('Escritorial Talentos', 'Escalar Talentos')),
+  descricao text not null,
+  valor numeric(12, 2) not null,
+  competencia date not null,
+  observacoes text,
+  planilha_linha integer unique,
+  planilha_original jsonb,
+  criado_em timestamptz not null default now()
+);
+
+create index receitas_fixas_competencia_idx on public.receitas_fixas (competencia);
 
 -- CRM ---------------------------------------------------------------------
 
@@ -166,12 +194,15 @@ alter table public.projetos enable row level security;
 alter table public.analistas enable row level security;
 alter table public.clientes enable row level security;
 alter table public.vagas enable row level security;
+alter table public.receitas_fixas enable row level security;
 alter table public.contatos enable row level security;
 alter table public.oportunidades enable row level security;
 alter table public.interacoes enable row level security;
 
 drop policy if exists "Users see only own profile" on public.profiles;
 drop policy if exists "Admin can see all profiles" on public.profiles;
+drop policy if exists profiles_ler on public.profiles;
+drop policy if exists profiles_admin on public.profiles;
 create policy profiles_ler on public.profiles for select to authenticated
   using (id = auth.uid() or public.ve_tudo());
 create policy profiles_admin on public.profiles for update to authenticated
@@ -198,6 +229,11 @@ create policy vagas_editar on public.vagas for update to authenticated
   using (public.edita_tudo() or analista_id = public.minha_analista())
   with check (public.edita_tudo() or analista_id = public.minha_analista());
 create policy vagas_apagar on public.vagas for delete to authenticated using (public.edita_tudo());
+
+create policy receitas_fixas_ler on public.receitas_fixas for select to authenticated
+  using (public.ve_tudo());
+create policy receitas_fixas_admin on public.receitas_fixas for all to authenticated
+  using (public.edita_tudo()) with check (public.edita_tudo());
 
 create policy contatos_ler on public.contatos for select to authenticated using (true);
 create policy contatos_criar on public.contatos for insert to authenticated with check (true);
